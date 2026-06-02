@@ -21,6 +21,7 @@ from django.urls import reverse
 from .consumers import option_texts, score_for
 from .models import (
     GameSession,
+    LiveQuizGrade,
     Player,
     PlayerAnswer,
     QuestionBankEntry,
@@ -432,3 +433,105 @@ class LiveGameFlowTests(TransactionTestCase):
 
         await host.disconnect()
         await pa.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Live-quiz grades (gradeable result per enrolled student, separate table)
+# ---------------------------------------------------------------------------
+
+
+class LiveQuizGradeTests(TransactionTestCase):
+    """Finishing a game writes a LiveQuizGrade row (accuracy %) per enrolled
+    student, leaving the speed-weighted leaderboard score on Player."""
+
+    def setUp(self):
+        self.host = User.objects.create(
+            username='host', role=User.Role.INSTRUCTOR, is_active=True,
+        )
+        self.subject = Subject.objects.create(name='Maths', code='MATH')
+        self.questions = [
+            QuestionBankEntry.objects.create(
+                question=f'Q{i}',
+                options={'A': 'Right', 'B': 'Wrong1', 'C': 'Wrong2'},
+                correct_answer_text='Right',
+                subject=self.subject,
+            )
+            for i in range(2)
+        ]
+        self.game = GameSession.objects.create(
+            host=self.host,
+            subject=self.subject,
+            question_ids=[q.id for q in self.questions],
+            num_questions=2,
+            seconds_per_question=20,
+        )
+        # An enrolled student, joined as a player tied to their account.
+        self.student_user = User.objects.create(
+            username='stud', role=User.Role.STUDENT, is_active=True,
+        )
+        self.student = Student.objects.create(
+            user=self.student_user, student_number='S1',
+            course='CS', section='A', year_level=1,
+        )
+        SubjectStudent.objects.create(subject=self.subject, student=self.student)
+        self.player = Player.objects.create(
+            game=self.game, nickname='Alice', student_user=self.student_user,
+        )
+
+    def test_finishing_writes_grade_for_enrolled_student(self):
+        async_to_sync(self._play_and_finish)()
+
+        grade = LiveQuizGrade.objects.get(game=self.game, student=self.student)
+        # Answered 1 of 2 correctly -> 50%.
+        self.assertEqual(grade.correct_count, 1)
+        self.assertEqual(grade.total_questions, 2)
+        self.assertEqual(str(grade.percentage), '50.00')
+
+    def test_anonymous_player_gets_no_grade(self):
+        Player.objects.create(game=self.game, nickname='Ghost')  # no student_user
+        async_to_sync(self._play_and_finish)()
+        # Only the enrolled student is graded; the anonymous row is skipped.
+        self.assertEqual(LiveQuizGrade.objects.filter(game=self.game).count(), 1)
+
+    async def _play_and_finish(self):
+        # A lone player answering trips the "everyone answered -> reveal early"
+        # path, so results/question/answer_count all interleave; skip any
+        # background event and wait only for the one we care about.
+        noise = ('lobby', 'joined', 'answer_count', 'answer_ack', 'results', 'question')
+
+        host = WebsocketCommunicator(app, f'ws/host/{self.game.room_code}/')
+        host.scope['user'] = self.host
+        await host.connect()
+        await host.receive_json_from(timeout=5)
+
+        player = WebsocketCommunicator(app, f'ws/play/{self.game.room_code}/')
+        player.scope['session'] = {'player_id': self.player.id}
+        player.scope['user'] = self.student_user  # the student-bound player must match
+        await player.connect()
+        await _wait_for(player, 'joined', skip=('lobby',))
+
+        # Q0: answer correctly.
+        await host.send_json_to({'action': 'start'})
+        await _wait_for(host, 'question', skip=noise)
+        await _wait_for(player, 'question', skip=noise)
+        await player.send_json_to(
+            {'action': 'answer', 'question_index': 0, 'choice': 'Right', 'ms': 1000}
+        )
+        await _wait_for(player, 'answer_ack', skip=noise)
+        await host.send_json_to({'action': 'reveal'})
+        await _wait_for(host, 'results', skip=noise)
+
+        # Q1: answer incorrectly.
+        await host.send_json_to({'action': 'next'})
+        await _wait_for(host, 'question', skip=noise)
+        await _wait_for(player, 'question', skip=noise)
+        await player.send_json_to(
+            {'action': 'answer', 'question_index': 1, 'choice': 'Wrong1', 'ms': 1000}
+        )
+        await _wait_for(player, 'answer_ack', skip=noise)
+
+        await host.send_json_to({'action': 'end'})
+        await _wait_for(host, 'game_over', skip=noise)
+
+        await host.disconnect()
+        await player.disconnect()

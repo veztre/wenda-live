@@ -27,7 +27,15 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.db.models import F
 
-from .models import GameSession, Player, PlayerAnswer, QuestionBankEntry, User
+from .models import (
+    GameSession,
+    LiveQuizGrade,
+    Player,
+    PlayerAnswer,
+    QuestionBankEntry,
+    Student,
+    User,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +244,7 @@ class HostConsumer(RoomConsumer):
     async def _finish(self):
         self._cancel_timer()
         await self._mark_finished()
+        await self._write_grades()
         leaderboard = await self._leaderboard()
         await self.broadcast('over', {'leaderboard': leaderboard})
 
@@ -323,6 +332,46 @@ class HostConsumer(RoomConsumer):
         GameSession.objects.filter(pk=self.game_id).update(
             status=GameSession.Status.FINISHED, finished_at=timezone.now()
         )
+
+    @database_sync_to_async
+    def _write_grades(self):
+        """Persist one gradeable LiveQuizGrade row per enrolled student.
+
+        percentage = correct answers / total questions (plain accuracy, not the
+        speed-weighted leaderboard score). Players without a resolvable Student
+        profile (legacy anonymous rows) are skipped. update_or_create keeps it
+        idempotent, so re-finishing a game can't duplicate grade rows.
+        """
+        from decimal import Decimal
+
+        game = GameSession.objects.get(pk=self.game_id)
+        total_questions = len(game.question_ids)
+        if total_questions == 0:
+            return
+
+        players = Player.objects.filter(
+            game_id=self.game_id, student_user__isnull=False
+        )
+        for player in players:
+            student = Student.objects.filter(user_id=player.student_user_id).first()
+            if student is None:
+                continue
+            correct = PlayerAnswer.objects.filter(
+                player_id=player.id, is_correct=True
+            ).count()
+            percentage = (
+                Decimal(correct) / Decimal(total_questions) * 100
+            ).quantize(Decimal('0.01'))
+            LiveQuizGrade.objects.update_or_create(
+                game_id=self.game_id,
+                student_id=student.id,
+                defaults={
+                    'correct_count': correct,
+                    'total_questions': total_questions,
+                    'total_score': Decimal(correct),
+                    'percentage': percentage,
+                },
+            )
 
 
 # ---------------------------------------------------------------------------

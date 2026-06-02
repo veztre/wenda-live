@@ -22,6 +22,10 @@ isolated from the core LMS.
   earning more points.
 - **Shared question bank:** questions, options, and correct answers come from the
   same bank used by wenda-quiz — no duplication.
+- **Gradeable results:** when a game finishes, each enrolled student's accuracy
+  (`correct / total`) is saved as a `LiveQuizGrade` in its own table, ready to
+  feed into the student's overall grade. The speed-weighted leaderboard score is
+  kept separate and is not used for grading.
 
 ## Tech stack
 
@@ -46,6 +50,8 @@ isolated from the core LMS.
   - `GameSession` (`kahoot_gamesession`)
   - `Player` (`kahoot_player`)
   - `PlayerAnswer` (`kahoot_playeranswer`)
+  - `LiveQuizGrade` (`kahoot_livequizgrade`) — per-student accuracy grade written
+    when a game finishes; the gradeable counterpart to wenda-quiz's `QuizResult`
 - **WebSocket routing** (`wenda_live/routing.py`):
   - `ws/host/<room_code>/` → `HostConsumer`
   - `ws/play/<room_code>/` → `PlayConsumer`

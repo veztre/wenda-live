@@ -6,7 +6,7 @@ deliberately NOT registered here — they're owned and administered by wenda-qui
 
 from django.contrib import admin
 
-from .models import GameSession, Player, PlayerAnswer
+from .models import GameSession, LiveQuizGrade, Player, PlayerAnswer
 
 
 class PlayerInline(admin.TabularInline):
@@ -36,3 +36,14 @@ class PlayerAdmin(admin.ModelAdmin):
 class PlayerAnswerAdmin(admin.ModelAdmin):
     list_display = ('player', 'question_index', 'is_correct', 'points_awarded', 'ms_to_answer')
     list_filter = ('is_correct',)
+
+
+@admin.register(LiveQuizGrade)
+class LiveQuizGradeAdmin(admin.ModelAdmin):
+    list_display = ('student', 'game', 'percentage', 'correct_count', 'total_questions', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('student__student_number', 'game__room_code')
+    readonly_fields = (
+        'game', 'student', 'correct_count', 'total_questions',
+        'total_score', 'percentage', 'created_at',
+    )

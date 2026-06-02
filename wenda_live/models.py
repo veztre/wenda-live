@@ -20,6 +20,7 @@ app rename; Wenda must not touch these.
 """
 
 import secrets
+from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -353,3 +354,59 @@ class PlayerAnswer(models.Model):
 
     def __str__(self):
         return f"{self.player.nickname} Q{self.question_index} {'check' if self.is_correct else 'x'}"
+
+
+class LiveQuizGrade(models.Model):
+    """A student's gradeable result from one finished live quiz game.
+
+    Written when a GameSession finishes — one row per (game, enrolled student).
+    Kept in its own table so the live-quiz ``percentage`` can feed wenda-quiz's
+    grade computation (which averages QuizResult.percentage) without touching
+    that table. Only players tied to an enrolled Student get a row; legacy
+    anonymous players are skipped. ``percentage`` is plain accuracy (correct /
+    total) — the speed-weighted leaderboard value is NOT a grade and stays on
+    Player.score.
+
+    The table uses the app's ``kahoot_*`` prefix for consistency with the other
+    Wenda-Live-owned tables in the shared database.
+    """
+
+    game = models.ForeignKey(
+        GameSession,
+        on_delete=models.CASCADE,
+        related_name='grades',
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.DO_NOTHING,
+        related_name='live_quiz_grades',
+        db_column='student_id',
+    )
+    correct_count = models.PositiveIntegerField(default=0)
+    total_questions = models.PositiveIntegerField(default=0)
+    total_score = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='Number of correct answers, as a decimal (mirrors QuizResult.total_score).',
+    )
+    percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='correct_count / total_questions * 100.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'kahoot_livequizgrade'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['game', 'student'],
+                name='uniq_grade_per_student_per_game',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.student} - {self.game.room_code}: {self.percentage}%"
