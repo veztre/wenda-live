@@ -34,6 +34,13 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
+# App-specific cookie names so Wenda-Live keeps its own session even when it
+# shares a hostname with wenda-quiz (e.g. both on 127.0.0.1 in dev, or a shared
+# domain in prod). Without this they'd both use Django's default `sessionid`
+# and clobber each other's login. Changing these logs existing users out once.
+SESSION_COOKIE_NAME = 'wendalive_sessionid'
+CSRF_COOKIE_NAME = 'wendalive_csrftoken'
+
 
 # Application definition
 
