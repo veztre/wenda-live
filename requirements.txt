@@ -1,0 +1,13 @@
+# Wenda-Live direct dependencies (pinned). Transitive packages
+# (Twisted, autobahn, asgiref, cryptography, …) are resolved by pip.
+#
+#   python -m venv venv
+#   venv\Scripts\pip install -r requirements.txt
+
+Django==6.0.5             # web framework
+channels==4.3.2           # WebSocket / ASGI layer for the live game
+daphne==4.2.1             # ASGI server (HTTP + WebSocket)
+channels_redis==4.3.0     # Redis channel layer for production
+redis==8.0.0              # Redis client used by channels_redis
+mysqlclient==2.2.8        # MySQL driver for the shared wenda_db
+python-dotenv==1.2.2      # loads the project-root .env

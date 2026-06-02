@@ -1,0 +1,77 @@
+{% extends 'wenda_live/base.html' %}
+
+{% block title %}Wenda Live — Play{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center g-4 mt-1">
+
+  <!-- Player join -->
+  <div class="col-12 col-md-6 col-lg-5">
+    <div class="card shadow-sm border-0">
+      <div class="card-body p-4 text-center">
+        <h1 class="h4 fw-bold mb-1">Join a game</h1>
+        <p class="text-muted small mb-4">Enter the PIN your host is showing on screen.</p>
+
+        {% if can_join %}
+        <form method="post" action="{% url 'wenda_live:join_game' %}" novalidate>
+          {% csrf_token %}
+
+          <div class="mb-3">
+            {{ join_form.room_code }}
+            {% if join_form.room_code.errors %}
+              <div class="text-danger small mt-1">{{ join_form.room_code.errors.as_text }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            {{ join_form.nickname }}
+            {% if join_form.nickname.errors %}
+              <div class="text-danger small mt-1">{{ join_form.nickname.errors.as_text }}</div>
+            {% endif %}
+          </div>
+
+          {% if join_form.non_field_errors %}
+            <div class="text-danger small mb-2">{{ join_form.non_field_errors.as_text }}</div>
+          {% endif %}
+
+          <button type="submit" class="btn btn-wenda btn-lg w-100">
+            <i class="bi bi-box-arrow-in-right me-1"></i> Enter
+          </button>
+        </form>
+        {% elif user.is_authenticated %}
+          <p class="text-muted small mb-0">
+            You’re signed in as a host. Games are played by students enrolled in the subject.
+          </p>
+        {% else %}
+          <p class="text-muted small mb-3">Sign in with your student account to join a game.</p>
+          <a href="{% url 'wenda_live:login' %}" class="btn btn-wenda btn-lg w-100">
+            <i class="bi bi-person me-1"></i> Sign in to join
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Host CTA -->
+  <div class="col-12 col-md-6 col-lg-5">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-body p-4 d-flex flex-column justify-content-center text-center">
+        <h2 class="h4 fw-bold mb-1">Host a game</h2>
+        <p class="text-muted small mb-4">
+          Sign in with your Wenda account to launch a live quiz from the question bank.
+        </p>
+        {% if user.is_authenticated %}
+          <a href="{% url 'wenda_live:host_create_game' %}" class="btn btn-outline-dark btn-lg">
+            <i class="bi bi-plus-circle me-1"></i> Create a game
+          </a>
+        {% else %}
+          <a href="{% url 'wenda_live:login' %}" class="btn btn-outline-dark btn-lg">
+            <i class="bi bi-person-badge me-1"></i> Host sign in
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

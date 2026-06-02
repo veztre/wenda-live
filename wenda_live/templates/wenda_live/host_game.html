@@ -1,0 +1,238 @@
+{% extends 'wenda_live/base.html' %}
+
+{% block title %}Lobby {{ game.room_code }} — Wenda Live{% endblock %}
+
+{% block extra_css %}
+  .answer-bar { height: 1.5rem; transition: width .4s ease; }
+  .opt-A { background:#e21b3c; } .opt-B { background:#1368ce; }
+  .opt-C { background:#d89e00; } .opt-D { background:#26890c; }
+  .opt-E { background:#46178f; } .opt-F { background:#0aa3a3; }
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center" id="host-app"
+     data-room-code="{{ game.room_code }}">
+  <div class="col-12 col-lg-9">
+
+    <!-- ===== Lobby ===== -->
+    <section id="view-lobby">
+      <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body text-center p-4">
+          <p class="text-muted small text-uppercase mb-1">Game PIN</p>
+          <div class="display-4 room-code text-dark">{{ game.room_code }}</div>
+          <p class="text-muted small mt-2 mb-0">
+            Players join at <strong>{{ request.get_host }}</strong> with this PIN.
+          </p>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h5 fw-bold mb-0">
+          Players <span class="badge bg-secondary" id="player-count">0</span>
+        </h2>
+        <span class="badge bg-light text-dark">
+          {{ game.num_questions }} questions · {{ game.seconds_per_question }}s each
+        </span>
+      </div>
+
+      <ul class="list-group mb-4" id="player-list">
+        <li class="list-group-item text-muted" id="no-players">Waiting for players to join…</li>
+      </ul>
+
+      <button class="btn btn-wenda btn-lg w-100" id="start-btn" disabled>
+        <i class="bi bi-play-fill me-1"></i> Start game
+      </button>
+      <p class="text-center text-muted small mt-2 mb-0" id="conn-status">
+        <i class="bi bi-wifi-off me-1"></i> Connecting…
+      </p>
+    </section>
+
+    <!-- ===== Question ===== -->
+    <section id="view-question" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="badge bg-secondary" id="q-progress">Question</span>
+        <span class="badge bg-dark fs-6" id="q-timer">–</span>
+        <span class="badge bg-light text-dark" id="q-answered">0 answered</span>
+      </div>
+      <div class="card shadow-sm border-0 mb-3">
+        <div class="card-body p-4 text-center">
+          <h2 class="h4 fw-bold mb-0" id="q-text"></h2>
+        </div>
+      </div>
+      <div id="q-options" class="vstack gap-2 mb-3"></div>
+      <button class="btn btn-outline-dark w-100" id="reveal-btn">
+        <i class="bi bi-eye me-1"></i> Reveal answer now
+      </button>
+    </section>
+
+    <!-- ===== Results ===== -->
+    <section id="view-results" class="d-none">
+      <div class="card shadow-sm border-0 mb-3">
+        <div class="card-body p-4 text-center">
+          <p class="text-muted small text-uppercase mb-1">Correct answer</p>
+          <h2 class="h4 fw-bold text-success mb-0" id="r-correct"></h2>
+        </div>
+      </div>
+      <h3 class="h6 fw-bold">Leaderboard</h3>
+      <ol class="list-group list-group-numbered mb-3" id="r-leaderboard"></ol>
+      <button class="btn btn-wenda btn-lg w-100" id="next-btn">
+        <i class="bi bi-arrow-right me-1"></i> Next question
+      </button>
+      <button class="btn btn-outline-dark btn-lg w-100 d-none" id="finish-btn">
+        <i class="bi bi-flag me-1"></i> Show final results
+      </button>
+    </section>
+
+    <!-- ===== Game over ===== -->
+    <section id="view-over" class="d-none text-center">
+      <i class="bi bi-trophy-fill text-warning" style="font-size:3rem;"></i>
+      <h2 class="h3 fw-bold mt-2 mb-4">Final results</h2>
+      <ol class="list-group list-group-numbered text-start" id="o-leaderboard"></ol>
+      <a href="{% url 'wenda_live:host_create_game' %}" class="btn btn-wenda btn-lg mt-4">
+        <i class="bi bi-plus-circle me-1"></i> Host another game
+      </a>
+    </section>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const app = document.getElementById('host-app');
+  const roomCode = app.dataset.roomCode;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock = new WebSocket(`${proto}://${location.host}/ws/host/${roomCode}/`);
+
+  const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const views = {
+    lobby: document.getElementById('view-lobby'),
+    question: document.getElementById('view-question'),
+    results: document.getElementById('view-results'),
+    over: document.getElementById('view-over'),
+  };
+  function show(name) {
+    for (const [k, el] of Object.entries(views)) el.classList.toggle('d-none', k !== name);
+  }
+
+  let currentOptions = [];
+  let shownIndex = -1;
+  let countdownId = null;
+
+  function startCountdown(endsAt) {
+    clearInterval(countdownId);
+    const timer = document.getElementById('q-timer');
+    function tick() {
+      const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+      timer.textContent = left + 's';
+      if (left <= 0) clearInterval(countdownId);
+    }
+    tick();
+    countdownId = setInterval(tick, 250);
+  }
+
+  function renderLeaderboard(el, rows) {
+    el.innerHTML = '';
+    if (!rows.length) {
+      el.innerHTML = '<li class="list-group-item text-muted">No scores yet.</li>';
+      return;
+    }
+    rows.forEach(r => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex justify-content-between align-items-center';
+      li.innerHTML = `<span>${escapeHtml(r.nickname)}</span>` +
+        `<span class="badge bg-wenda bg-secondary rounded-pill">${r.score}</span>`;
+      el.appendChild(li);
+    });
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  // ----- incoming events -----
+  sock.addEventListener('open', () => {
+    document.getElementById('conn-status').innerHTML =
+      '<i class="bi bi-wifi me-1"></i> Connected — waiting for players.';
+  });
+  sock.addEventListener('close', () => {
+    document.getElementById('conn-status').innerHTML =
+      '<i class="bi bi-wifi-off me-1"></i> Disconnected.';
+  });
+
+  sock.addEventListener('message', (e) => {
+    const data = JSON.parse(e.data);
+    switch (data.event) {
+      case 'lobby': {
+        document.getElementById('player-count').textContent = data.count;
+        const list = document.getElementById('player-list');
+        list.innerHTML = '';
+        if (!data.players.length) {
+          list.innerHTML = '<li class="list-group-item text-muted">Waiting for players to join…</li>';
+        } else {
+          data.players.forEach(n => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item';
+            li.textContent = n;
+            list.appendChild(li);
+          });
+        }
+        document.getElementById('start-btn').disabled = data.count === 0;
+        break;
+      }
+      case 'question': {
+        if (data.index === shownIndex) break;   // ignore duplicate delivery
+        shownIndex = data.index;
+        currentOptions = data.options;
+        show('question');
+        document.getElementById('q-progress').textContent =
+          `Question ${data.index + 1} of ${data.total}`;
+        document.getElementById('q-text').textContent = data.question;
+        document.getElementById('q-answered').textContent = '0 answered';
+        const box = document.getElementById('q-options');
+        box.innerHTML = '';
+        data.options.forEach((opt, i) => {
+          const row = document.createElement('div');
+          row.className = `text-white rounded p-2 opt-${LETTERS[i % LETTERS.length]}`;
+          row.innerHTML = `<strong class="me-2">${LETTERS[i % LETTERS.length]}</strong>` +
+            escapeHtml(opt);
+          box.appendChild(row);
+        });
+        startCountdown(data.ends_at);
+        break;
+      }
+      case 'answer_count': {
+        document.getElementById('q-answered').textContent =
+          `${data.answered} / ${data.total} answered`;
+        break;
+      }
+      case 'results': {
+        clearInterval(countdownId);
+        show('results');
+        document.getElementById('r-correct').textContent = data.correct;
+        renderLeaderboard(document.getElementById('r-leaderboard'), data.leaderboard);
+        document.getElementById('next-btn').classList.toggle('d-none', !data.has_next);
+        document.getElementById('finish-btn').classList.toggle('d-none', data.has_next);
+        break;
+      }
+      case 'game_over': {
+        clearInterval(countdownId);
+        show('over');
+        renderLeaderboard(document.getElementById('o-leaderboard'), data.leaderboard);
+        break;
+      }
+    }
+  });
+
+  // ----- outgoing actions -----
+  const sendAction = (action) => sock.send(JSON.stringify({ action }));
+  document.getElementById('start-btn').addEventListener('click', () => sendAction('start'));
+  document.getElementById('reveal-btn').addEventListener('click', () => sendAction('reveal'));
+  document.getElementById('next-btn').addEventListener('click', () => sendAction('next'));
+  document.getElementById('finish-btn').addEventListener('click', () => sendAction('end'));
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends 'wenda_live/base.html' %}
+
+{% block title %}Sign In — Wenda Live{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-2">
+  <div class="col-12 col-sm-9 col-md-6 col-lg-4">
+    <div class="card shadow-sm border-0">
+      <div class="card-body p-4">
+        <h1 class="h4 fw-bold mb-1">Sign in</h1>
+        <p class="text-muted small mb-4">Use your Wenda account — hosts to launch a game, students to join one.</p>
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger py-2">{{ form.non_field_errors.as_text }}</div>
+        {% endif %}
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          <div class="mb-3">
+            <label for="id_username" class="form-label fw-semibold small">Username</label>
+            <input type="text" name="username" id="id_username"
+                   class="form-control{% if form.username.errors %} is-invalid{% endif %}"
+                   value="{{ form.username.value|default:'' }}"
+                   autocomplete="username" autofocus />
+            {% if form.username.errors %}
+              <div class="invalid-feedback">{{ form.username.errors.as_text }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-4">
+            <label for="id_password" class="form-label fw-semibold small">Password</label>
+            <input type="password" name="password" id="id_password"
+                   class="form-control{% if form.password.errors %} is-invalid{% endif %}"
+                   autocomplete="current-password" />
+            {% if form.password.errors %}
+              <div class="invalid-feedback">{{ form.password.errors.as_text }}</div>
+            {% endif %}
+          </div>
+
+          <button type="submit" class="btn btn-wenda w-100">
+            <i class="bi bi-box-arrow-in-right me-1"></i> Sign In
+          </button>
+        </form>
+
+        <p class="text-center text-muted small mt-3 mb-0">
+          <a href="{% url 'wenda_live:home' %}" class="text-decoration-none">← Back to home</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

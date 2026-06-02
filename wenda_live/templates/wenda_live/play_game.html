@@ -1,0 +1,221 @@
+{% extends 'wenda_live/base.html' %}
+
+{% block title %}Playing {{ game.room_code }} — Wenda Live{% endblock %}
+
+{% block extra_css %}
+  .opt-btn { border:none; color:#fff; font-weight:600; min-height:4rem; }
+  .opt-A { background:#e21b3c; } .opt-B { background:#1368ce; }
+  .opt-C { background:#d89e00; } .opt-D { background:#26890c; }
+  .opt-E { background:#46178f; } .opt-F { background:#0aa3a3; }
+  .opt-btn.faded { opacity:.35; }
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center" id="play-app"
+     data-room-code="{{ game.room_code }}" data-player-id="{{ player.id }}"
+     data-nickname="{{ player.nickname }}">
+  <div class="col-12 col-sm-10 col-md-8 col-lg-6">
+
+    <!-- ===== Waiting ===== -->
+    <section id="view-wait" class="text-center">
+      <div class="card shadow-sm border-0">
+        <div class="card-body p-4">
+          <i class="bi bi-hourglass-split text-secondary" style="font-size:2.5rem;"></i>
+          <h1 class="h4 fw-bold mt-2 mb-1">You're in!</h1>
+          <p class="text-muted mb-0">
+            Playing as <strong>{{ player.nickname }}</strong> in
+            <span class="room-code">{{ game.room_code }}</span>.
+          </p>
+          <p class="text-muted small mt-3 mb-0" id="wait-status">Waiting for the host to start…</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Question ===== -->
+    <section id="view-question" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="badge bg-secondary" id="q-progress">Question</span>
+        <span class="badge bg-dark fs-6" id="q-timer">–</span>
+      </div>
+      <div class="card shadow-sm border-0 mb-3">
+        <div class="card-body p-3 text-center">
+          <h2 class="h5 fw-bold mb-0" id="q-text"></h2>
+        </div>
+      </div>
+      <div id="q-options" class="d-grid gap-2"></div>
+      <p class="text-center text-muted small mt-3 mb-0 d-none" id="q-locked">
+        <i class="bi bi-lock-fill me-1"></i> Answer locked in — hang tight!
+      </p>
+    </section>
+
+    <!-- ===== Result (per round) ===== -->
+    <section id="view-result" class="d-none text-center">
+      <div class="card shadow-sm border-0">
+        <div class="card-body p-4">
+          <i class="bi" id="r-icon" style="font-size:3rem;"></i>
+          <h2 class="h4 fw-bold mt-2" id="r-verdict"></h2>
+          <p class="text-muted mb-2">Correct answer: <strong id="r-correct"></strong></p>
+          <hr>
+          <p class="mb-0">Your score: <strong id="r-score">0</strong>
+            <span class="text-muted" id="r-rank"></span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Game over ===== -->
+    <section id="view-over" class="d-none text-center">
+      <i class="bi bi-trophy-fill text-warning" style="font-size:3rem;"></i>
+      <h2 class="h3 fw-bold mt-2 mb-1" id="o-headline">Game over!</h2>
+      <p class="text-muted" id="o-yourplace"></p>
+      <ol class="list-group list-group-numbered text-start mt-3" id="o-leaderboard"></ol>
+      <a href="{% url 'wenda_live:home' %}" class="btn btn-outline-dark mt-4">
+        <i class="bi bi-house me-1"></i> Back to home
+      </a>
+    </section>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const app = document.getElementById('play-app');
+  const roomCode = app.dataset.roomCode;
+  const myNick = app.dataset.nickname;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock = new WebSocket(`${proto}://${location.host}/ws/play/${roomCode}/`);
+
+  const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const views = {
+    wait: document.getElementById('view-wait'),
+    question: document.getElementById('view-question'),
+    result: document.getElementById('view-result'),
+    over: document.getElementById('view-over'),
+  };
+  function show(name) {
+    for (const [k, el] of Object.entries(views)) el.classList.toggle('d-none', k !== name);
+  }
+
+  let myChoice = null;       // text I picked for the current question
+  let questionStart = 0;     // ms timestamp the current question opened
+  let shownIndex = -1;       // index of the question currently on screen
+  let countdownId = null;
+
+  function startCountdown(endsAt) {
+    clearInterval(countdownId);
+    const timer = document.getElementById('q-timer');
+    function tick() {
+      const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+      timer.textContent = left + 's';
+      if (left <= 0) clearInterval(countdownId);
+    }
+    tick();
+    countdownId = setInterval(tick, 250);
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function renderLeaderboard(rows) {
+    const el = document.getElementById('o-leaderboard');
+    el.innerHTML = '';
+    rows.forEach(r => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex justify-content-between align-items-center';
+      if (r.nickname === myNick) li.classList.add('list-group-item-warning', 'fw-bold');
+      li.innerHTML = `<span>${escapeHtml(r.nickname)}</span>` +
+        `<span class="badge bg-secondary rounded-pill">${r.score}</span>`;
+      el.appendChild(li);
+    });
+  }
+
+  function myRow(rows) {
+    return rows.find(r => r.nickname === myNick);
+  }
+
+  // ----- incoming events -----
+  sock.addEventListener('close', () => {
+    document.getElementById('wait-status').textContent = 'Disconnected. Refresh to rejoin.';
+  });
+
+  sock.addEventListener('message', (e) => {
+    const data = JSON.parse(e.data);
+    switch (data.event) {
+      case 'question': {
+        if (data.index === shownIndex) break;   // ignore duplicate delivery
+        shownIndex = data.index;
+        myChoice = null;
+        questionStart = Date.now();
+        show('question');
+        document.getElementById('q-progress').textContent =
+          `Question ${data.index + 1} of ${data.total}`;
+        document.getElementById('q-text').textContent = data.question;
+        document.getElementById('q-locked').classList.add('d-none');
+        const box = document.getElementById('q-options');
+        box.innerHTML = '';
+        data.options.forEach((opt, i) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = `btn opt-btn rounded opt-${LETTERS[i % LETTERS.length]}`;
+          btn.innerHTML = `<strong class="me-2">${LETTERS[i % LETTERS.length]}</strong>` +
+            escapeHtml(opt);
+          btn.addEventListener('click', () => choose(opt, data.index, box));
+          box.appendChild(btn);
+        });
+        startCountdown(data.ends_at);
+        break;
+      }
+      case 'answer_ack': {
+        document.getElementById('q-locked').classList.remove('d-none');
+        break;
+      }
+      case 'results': {
+        clearInterval(countdownId);
+        show('result');
+        const answered = myChoice !== null;
+        const correct = answered && myChoice === data.correct;
+        const icon = document.getElementById('r-icon');
+        icon.className = 'bi ' + (correct ? 'bi-check-circle-fill text-success'
+          : 'bi-x-circle-fill text-danger');
+        document.getElementById('r-verdict').textContent = !answered
+          ? 'Too slow!' : (correct ? 'Correct!' : 'Not quite');
+        document.getElementById('r-correct').textContent = data.correct;
+        const mine = myRow(data.leaderboard);
+        document.getElementById('r-score').textContent = mine ? mine.score : 0;
+        const rank = data.leaderboard.findIndex(r => r.nickname === myNick) + 1;
+        document.getElementById('r-rank').textContent =
+          rank ? `· rank ${rank} of ${data.leaderboard.length}` : '';
+        break;
+      }
+      case 'game_over': {
+        clearInterval(countdownId);
+        show('over');
+        const rank = data.leaderboard.findIndex(r => r.nickname === myNick) + 1;
+        document.getElementById('o-yourplace').textContent =
+          rank ? `You finished #${rank} of ${data.leaderboard.length}.` : '';
+        renderLeaderboard(data.leaderboard);
+        break;
+      }
+    }
+  });
+
+  function choose(optText, index, box) {
+    if (myChoice !== null) return;            // one answer per question
+    myChoice = optText;
+    const ms = Date.now() - questionStart;
+    sock.send(JSON.stringify({
+      action: 'answer', question_index: index, choice: optText, ms,
+    }));
+    // Lock the UI: fade the others, keep the chosen one highlighted.
+    box.querySelectorAll('.opt-btn').forEach(b => {
+      b.disabled = true;
+      if (!b.textContent.endsWith(optText)) b.classList.add('faded');
+    });
+  }
+})();
+</script>
+{% endblock %}
