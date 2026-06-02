@@ -139,6 +139,5 @@ internal notes for the current roadmap.
 
 ## License
 
-This project is proprietary. All rights reserved. It is not licensed for use,
-copying, modification, or distribution without the express permission of the
-Wenda project owners.
+This project is open source under the [MIT License](LICENSE) — anyone is free to
+download, use, modify, and distribute it.
