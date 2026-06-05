@@ -205,6 +205,52 @@ class HostCreateGameTests(TestCase):
         self.assertRedirects(resp, reverse('wenda_live:host_create_game'))
 
 
+class HostAccessControlTests(TestCase):
+    """Only instructors/admins may reach the host flow; students are bounced."""
+
+    def setUp(self):
+        self.subject = Subject.objects.create(name='Maths', code='MATH')
+        self.student_user = User.objects.create_user(
+            username='stud', password='pw', role=User.Role.STUDENT,
+        )
+        self.client.login(username='stud', password='pw')
+
+    def test_student_cannot_open_step1(self):
+        resp = self.client.get(reverse('wenda_live:host_create_game'))
+        self.assertRedirects(resp, reverse('wenda_live:home'))
+
+    def test_student_cannot_post_step1(self):
+        resp = self.client.post(
+            reverse('wenda_live:host_create_game'),
+            {'subject': self.subject.id, 'seconds_per_question': 30},
+        )
+        self.assertRedirects(resp, reverse('wenda_live:home'))
+
+    def test_student_cannot_open_step2(self):
+        resp = self.client.get(
+            reverse('wenda_live:host_select_questions'),
+            {'subject': self.subject.id, 'seconds': 20},
+        )
+        self.assertRedirects(resp, reverse('wenda_live:home'))
+
+    def test_student_cannot_create_game_via_step2(self):
+        entry = QuestionBankEntry.objects.create(
+            question='Q', options={'A': 'x'}, correct_answer_text='x',
+            subject=self.subject, topic='Algebra',
+        )
+        resp = self.client.post(
+            reverse('wenda_live:host_select_questions'),
+            {'subject': self.subject.id, 'seconds': 20, 'questions': [str(entry.id)]},
+        )
+        self.assertRedirects(resp, reverse('wenda_live:home'))
+        self.assertFalse(GameSession.objects.exists())
+
+    def test_student_does_not_see_host_button_on_home(self):
+        resp = self.client.get(reverse('wenda_live:home'))
+        self.assertContains(resp, 'hosting is for instructors only')
+        self.assertNotContains(resp, reverse('wenda_live:host_create_game'))
+
+
 class HelperTests(SimpleTestCase):
     def test_wrong_answer_scores_zero(self):
         self.assertEqual(score_for(False, 0, 20), 0)
@@ -538,3 +584,79 @@ class LiveQuizGradeTests(TransactionTestCase):
 
         await host.disconnect()
         await player.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Student viewing their own live-quiz results
+# ---------------------------------------------------------------------------
+
+
+class MyResultsTests(TestCase):
+    """A student can view (not download) their own saved LiveQuizGrade rows."""
+
+    def setUp(self):
+        self.host = User.objects.create_user(
+            username='prof', password='pw', role=User.Role.INSTRUCTOR,
+        )
+        self.subject = Subject.objects.create(name='Maths', code='MATH')
+        self.game = GameSession.objects.create(
+            host=self.host, subject=self.subject,
+            question_ids=[], num_questions=2, seconds_per_question=20,
+        )
+
+        self.student_user = User.objects.create_user(
+            username='stud', password='pw', role=User.Role.STUDENT,
+        )
+        self.student = Student.objects.create(
+            user=self.student_user, student_number='S1',
+            course='CS', section='A', year_level=1,
+        )
+        self.grade = LiveQuizGrade.objects.create(
+            game=self.game, student=self.student,
+            correct_count=1, total_questions=2,
+            total_score='975.00', percentage='48.75',
+        )
+
+        # Another student's grade — must never leak into the first student's page.
+        self.other_user = User.objects.create_user(
+            username='stud2', password='pw', role=User.Role.STUDENT,
+        )
+        self.other_student = Student.objects.create(
+            user=self.other_user, student_number='S2',
+            course='CS', section='A', year_level=1,
+        )
+        LiveQuizGrade.objects.create(
+            game=self.game, student=self.other_student,
+            correct_count=2, total_questions=2,
+            total_score='2000.00', percentage='100.00',
+        )
+
+    def test_student_sees_their_own_result(self):
+        self.client.login(username='stud', password='pw')
+        resp = self.client.get(reverse('wenda_live:my_results'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, '48.75')
+        self.assertContains(resp, '1 / 2')
+        self.assertContains(resp, self.game.room_code)
+
+    def test_student_does_not_see_other_students_result(self):
+        self.client.login(username='stud', password='pw')
+        resp = self.client.get(reverse('wenda_live:my_results'))
+        self.assertNotContains(resp, '100.00')
+
+    def test_student_without_grades_sees_empty_state(self):
+        self.client.login(username='stud2', password='pw')
+        LiveQuizGrade.objects.filter(student=self.other_student).delete()
+        resp = self.client.get(reverse('wenda_live:my_results'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "don't have any live quiz results yet")
+
+    def test_instructor_is_rejected(self):
+        self.client.login(username='prof', password='pw')
+        resp = self.client.get(reverse('wenda_live:my_results'))
+        self.assertRedirects(resp, reverse('wenda_live:home'))
+
+    def test_anonymous_is_sent_to_login(self):
+        resp = self.client.get(reverse('wenda_live:my_results'))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse('wenda_live:login'), resp['Location'])

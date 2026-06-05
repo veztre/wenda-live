@@ -27,6 +27,7 @@ from .consumers import option_texts
 from .forms import HostGameForm, JoinGameForm
 from .models import (
     GameSession,
+    LiveQuizGrade,
     Player,
     QuestionBankEntry,
     Subject,
@@ -349,3 +350,26 @@ def play_game(request, room_code):
         'wenda_live/play_game.html',
         {'game': game, 'player': player},
     )
+
+
+@login_required
+def my_results(request):
+    """A student's own saved live-quiz results (view only).
+
+    Lists the LiveQuizGrade rows written when each game the student played
+    finished — most recent first. Students only; a student with no profile or no
+    finished games just sees an empty state.
+    """
+    if not _is_student(request.user):
+        messages.error(request, 'Only students have live quiz results.')
+        return redirect('wenda_live:home')
+
+    student = Student.objects.filter(user_id=request.user.id).first()
+    grades = (
+        LiveQuizGrade.objects
+        .filter(student=student)
+        .select_related('game', 'game__subject')
+        .order_by('-created_at')
+        if student is not None else LiveQuizGrade.objects.none()
+    )
+    return render(request, 'wenda_live/my_results.html', {'grades': grades})

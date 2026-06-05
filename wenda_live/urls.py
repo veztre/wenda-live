@@ -29,4 +29,7 @@ urlpatterns = [
     # Player flow (no account required).
     path('join/', views.join_game, name='join_game'),
     path('play/<str:room_code>/', views.play_game, name='play_game'),
+
+    # A student viewing their own saved live-quiz results.
+    path('my-results/', views.my_results, name='my_results'),
 ]
