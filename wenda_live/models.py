@@ -363,9 +363,10 @@ class LiveQuizGrade(models.Model):
     Kept in its own table so the live-quiz ``percentage`` can feed wenda-quiz's
     grade computation (which averages QuizResult.percentage) without touching
     that table. Only players tied to an enrolled Student get a row; legacy
-    anonymous players are skipped. ``percentage`` is plain accuracy (correct /
-    total) — the speed-weighted leaderboard value is NOT a grade and stays on
-    Player.score.
+    anonymous players are skipped. ``percentage`` is the speed-weighted score
+    (``Player.score``) as a share of the maximum achievable score; ``total_score``
+    holds the raw points. Plain accuracy is still available as
+    ``correct_count`` / ``total_questions``.
 
     The table uses the app's ``kahoot_*`` prefix for consistency with the other
     Wenda-Live-owned tables in the shared database.
@@ -385,16 +386,16 @@ class LiveQuizGrade(models.Model):
     correct_count = models.PositiveIntegerField(default=0)
     total_questions = models.PositiveIntegerField(default=0)
     total_score = models.DecimalField(
-        max_digits=6,
+        max_digits=9,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text='Number of correct answers, as a decimal (mirrors QuizResult.total_score).',
+        help_text='Speed-weighted live score (sum of points_awarded / Player.score).',
     )
     percentage = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text='correct_count / total_questions * 100.',
+        help_text='total_score / (POINTS_BASE * total_questions) * 100 — the gradeable %.',
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

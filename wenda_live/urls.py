@@ -18,6 +18,9 @@ urlpatterns = [
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
 
+    # Single sign-on handoff from Wenda-Quiz (no second login).
+    path('sso/', views.sso_login, name='sso_login'),
+
     # Host flow (two steps: pick subject -> pick questions by topic).
     path('host/new/', views.host_create_game, name='host_create_game'),
     path('host/new/questions/', views.host_select_questions, name='host_select_questions'),

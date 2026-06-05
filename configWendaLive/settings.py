@@ -18,6 +18,11 @@ load_dotenv(BASE_DIR / '.env')
 
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-dev-only-change-me')
 
+# Shared secret used to verify the short-lived SSO handoff token from Wenda-Quiz
+# (lets a user already logged in there open this app without a second login). It
+# MUST match Wenda-Quiz's WENDA_SSO_SECRET exactly (override via env in prod).
+WENDA_SSO_SECRET = os.getenv('WENDA_SSO_SECRET', 'dev-shared-sso-secret-change-me')
+
 DEBUG = os.getenv('DJANGO_DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 
 allowed_hosts = os.getenv('DJANGO_ALLOWED_HOSTS', '')

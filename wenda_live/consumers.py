@@ -337,10 +337,14 @@ class HostConsumer(RoomConsumer):
     def _write_grades(self):
         """Persist one gradeable LiveQuizGrade row per enrolled student.
 
-        percentage = correct answers / total questions (plain accuracy, not the
-        speed-weighted leaderboard score). Players without a resolvable Student
-        profile (legacy anonymous rows) are skipped. update_or_create keeps it
-        idempotent, so re-finishing a game can't duplicate grade rows.
+        The grade is the student's speed-weighted live score (``Player.score``,
+        the sum of ``points_awarded``) expressed as a share of the maximum
+        achievable score (``POINTS_BASE`` per question): ``percentage =
+        score / (POINTS_BASE * total_questions) * 100``. Plain accuracy is still
+        recorded in ``correct_count`` / ``total_questions``. Players without a
+        resolvable Student profile (legacy anonymous rows) are skipped.
+        update_or_create keeps it idempotent, so re-finishing a game can't
+        duplicate grade rows.
         """
         from decimal import Decimal
 
@@ -349,6 +353,7 @@ class HostConsumer(RoomConsumer):
         if total_questions == 0:
             return
 
+        max_score = POINTS_BASE * total_questions
         players = Player.objects.filter(
             game_id=self.game_id, student_user__isnull=False
         )
@@ -360,7 +365,7 @@ class HostConsumer(RoomConsumer):
                 player_id=player.id, is_correct=True
             ).count()
             percentage = (
-                Decimal(correct) / Decimal(total_questions) * 100
+                Decimal(player.score) / Decimal(max_score) * 100
             ).quantize(Decimal('0.01'))
             LiveQuizGrade.objects.update_or_create(
                 game_id=self.game_id,
@@ -368,7 +373,7 @@ class HostConsumer(RoomConsumer):
                 defaults={
                     'correct_count': correct,
                     'total_questions': total_questions,
-                    'total_score': Decimal(correct),
+                    'total_score': Decimal(player.score),
                     'percentage': percentage,
                 },
             )

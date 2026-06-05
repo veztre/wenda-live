@@ -441,8 +441,8 @@ class LiveGameFlowTests(TransactionTestCase):
 
 
 class LiveQuizGradeTests(TransactionTestCase):
-    """Finishing a game writes a LiveQuizGrade row (accuracy %) per enrolled
-    student, leaving the speed-weighted leaderboard score on Player."""
+    """Finishing a game writes a LiveQuizGrade row per enrolled student whose
+    percentage is the speed-weighted score over the max achievable score."""
 
     def setUp(self):
         self.host = User.objects.create(
@@ -482,10 +482,13 @@ class LiveQuizGradeTests(TransactionTestCase):
         async_to_sync(self._play_and_finish)()
 
         grade = LiveQuizGrade.objects.get(game=self.game, student=self.student)
-        # Answered 1 of 2 correctly -> 50%.
+        # Answered 1 of 2 correctly; the correct answer at 1000ms (of 20s) scores
+        # 975 speed-weighted points. The grade is that score over the max
+        # achievable (1000 * 2 = 2000): 975 / 2000 = 48.75%.
         self.assertEqual(grade.correct_count, 1)
         self.assertEqual(grade.total_questions, 2)
-        self.assertEqual(str(grade.percentage), '50.00')
+        self.assertEqual(str(grade.total_score), '975.00')
+        self.assertEqual(str(grade.percentage), '48.75')
 
     def test_anonymous_player_gets_no_grade(self):
         Player.objects.create(game=self.game, nickname='Ghost')  # no student_user

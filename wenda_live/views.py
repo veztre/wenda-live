@@ -13,7 +13,9 @@ render a static shell and will open a WebSocket once consumers exist.
 
 from itertools import groupby
 
+from django.conf import settings
 from django.contrib import messages
+from django.core import signing
 from django.contrib.auth import login as auth_login, logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
@@ -93,6 +95,41 @@ def logout_view(request):
     auth_logout(request)
     messages.info(request, 'Signed out.')
     return redirect('wenda_live:home')
+
+
+# Salt + lifetime for the cross-app SSO token. The salt must match Wenda-Quiz's
+# WENDA_SSO_SALT; the token is single-purpose and short-lived (minted at click
+# time on the Quiz side, so a tight window is plenty).
+SSO_SALT = 'wenda-live-sso'
+SSO_MAX_AGE = 60  # seconds
+
+
+def sso_login(request):
+    """Single sign-on entry from Wenda-Quiz.
+
+    Verifies the short-lived signed token (shared WENDA_SSO_SECRET) minted by the
+    Quiz app and logs the matching shared-DB user in here, then sends them to the
+    right place (hosts to game creation, students to the join page). No second
+    login. An invalid/expired token just falls back to the normal login page.
+    """
+    try:
+        data = signing.loads(
+            request.GET.get('t', ''),
+            key=settings.WENDA_SSO_SECRET,
+            salt=SSO_SALT,
+            max_age=SSO_MAX_AGE,
+        )
+    except signing.BadSignature:
+        messages.error(request, 'That sign-in link is invalid or has expired. Please sign in.')
+        return redirect('wenda_live:login')
+
+    user = User.objects.filter(pk=data.get('uid'), is_active=True).first()
+    if user is None:
+        messages.error(request, 'Account not found. Please sign in.')
+        return redirect('wenda_live:login')
+
+    auth_login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+    return redirect(_post_login_redirect(user))
 
 
 # ---------------------------------------------------------------------------
