@@ -98,6 +98,19 @@ def logout_view(request):
     return redirect('wenda_live:home')
 
 
+def csrf_failure(request, reason=''):
+    """Friendly handler for CSRF failures (set as settings.CSRF_FAILURE_VIEW).
+
+    The usual cause is a stale form: the session (and CSRF cookie) expired while
+    a page sat open, so submitting it — sign in, join, sign out — fails CSRF
+    verification and Django would otherwise serve a raw 403. Instead we send the
+    user back to sign in with a clear message. Their session is gone anyway, so
+    re-authenticating is exactly what they need to do next.
+    """
+    messages.info(request, 'Your session expired. Please sign in again.')
+    return redirect('wenda_live:login')
+
+
 # Salt + lifetime for the cross-app SSO token. The salt must match Wenda-Quiz's
 # WENDA_SSO_SALT; the token is single-purpose and short-lived (minted at click
 # time on the Quiz side, so a tight window is plenty).

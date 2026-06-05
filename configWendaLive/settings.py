@@ -39,12 +39,33 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
+# Behind the TLS-terminating reverse proxy (nginx), bounce any plain-HTTP
+# request to HTTPS in production. The proxy header above lets Django see the
+# original scheme so it doesn't redirect-loop.
+SECURE_SSL_REDIRECT = not DEBUG
+
+# HSTS is OFF by default and opt-in via env: it's effectively irreversible for
+# the cache lifetime, and Wenda-Live shares a domain with Wenda-Quiz, so a
+# careless includeSubDomains/preload here would force HTTPS on the sibling too.
+# Set DJANGO_HSTS_SECONDS (e.g. 31536000) only once the whole domain is HTTPS.
+SECURE_HSTS_SECONDS = 0 if DEBUG else int(os.getenv('DJANGO_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = (
+    os.getenv('DJANGO_HSTS_INCLUDE_SUBDOMAINS', '0').lower() in ('1', 'true', 'yes', 'on')
+)
+SECURE_HSTS_PRELOAD = (
+    os.getenv('DJANGO_HSTS_PRELOAD', '0').lower() in ('1', 'true', 'yes', 'on')
+)
+
 # App-specific cookie names so Wenda-Live keeps its own session even when it
 # shares a hostname with wenda-quiz (e.g. both on 127.0.0.1 in dev, or a shared
 # domain in prod). Without this they'd both use Django's default `sessionid`
 # and clobber each other's login. Changing these logs existing users out once.
 SESSION_COOKIE_NAME = 'wendalive_sessionid'
 CSRF_COOKIE_NAME = 'wendalive_csrftoken'
+
+# When a stale form is submitted after the session/CSRF cookie expired, send the
+# user back to sign in with a message instead of serving Django's raw 403 page.
+CSRF_FAILURE_VIEW = 'wenda_live.views.csrf_failure'
 
 
 # Application definition

@@ -15,7 +15,7 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
-from django.test import SimpleTestCase, TestCase, TransactionTestCase
+from django.test import Client, SimpleTestCase, TestCase, TransactionTestCase
 from django.urls import reverse
 
 from .consumers import option_texts, score_for
@@ -249,6 +249,20 @@ class HostAccessControlTests(TestCase):
         resp = self.client.get(reverse('wenda_live:home'))
         self.assertContains(resp, 'hosting is for instructors only')
         self.assertNotContains(resp, reverse('wenda_live:host_create_game'))
+
+
+class CsrfFailureTests(TestCase):
+    """A stale form submitted after the session expired (CSRF failure) should
+    redirect to sign-in, not serve a raw 403."""
+
+    def test_missing_csrf_token_redirects_to_login(self):
+        # enforce_csrf_checks=True makes the test client behave like a browser:
+        # a POST with no CSRF token trips the real CsrfViewMiddleware.
+        client = Client(enforce_csrf_checks=True)
+        resp = client.post(reverse('wenda_live:login'), {
+            'username': 'whoever', 'password': 'whatever',
+        })
+        self.assertRedirects(resp, reverse('wenda_live:login'))
 
 
 class HelperTests(SimpleTestCase):

@@ -1,0 +1,48 @@
+# systemd unit for the Wenda-Live ASGI server (Daphne).
+#
+# Daphne — not gunicorn — because Wenda-Live needs WebSockets for the live game.
+# It serves both HTTP and WS on one port; nginx (see nginx-wenda-live.conf) sits
+# in front, terminates TLS, and proxies everything here.
+#
+# Install:
+#   sudo cp deploy/wenda-live.service /etc/systemd/system/wenda-live.service
+#   # edit the placeholders below to match the server, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now wenda-live
+#   sudo systemctl status wenda-live
+#
+# Adjust: User/Group, WorkingDirectory, and the venv path in ExecStart.
+
+[Unit]
+Description=Wenda-Live ASGI server (Daphne)
+# Live game state lives in Redis (channels_redis); start after it's up.
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+# A non-root account that owns the code checkout (NOT root).
+User=wenda
+Group=wenda
+
+# Absolute path to the project root (the dir containing manage.py).
+WorkingDirectory=/srv/wenda-live
+
+# settings load secrets from this file via python-dotenv; keep it 0600 and
+# owned by the service user. EnvironmentFile is a belt-and-suspenders so the
+# vars are present even for tools that don't import Django settings.
+EnvironmentFile=/srv/wenda-live/.env
+
+# Bind to loopback only — nginx is the public entry point. 8001 matches the
+# app's dev convention and the nginx upstream below.
+ExecStart=/srv/wenda-live/venv/bin/daphne -b 127.0.0.1 -p 8001 configWendaLive.asgi:application
+
+Restart=on-failure
+RestartSec=3
+
+# Light hardening (safe defaults; loosen only if something legitimately needs it).
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
