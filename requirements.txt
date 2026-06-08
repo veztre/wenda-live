@@ -8,6 +8,9 @@ Django==6.0.5             # web framework
 channels==4.3.2           # WebSocket / ASGI layer for the live game
 daphne==4.2.1             # ASGI server (HTTP + WebSocket)
 channels_redis==4.3.0     # Redis channel layer for production
-redis==8.0.0              # Redis client used by channels_redis
+redis==5.2.1              # Redis client used by channels_redis. PINNED <6: redis-py
+                          # >=6 applies its socket timeout to blocking reads, so
+                          # channels_redis's long BZPOPMIN receive raises
+                          # TimeoutError and drops live WebSocket consumers.
 mysqlclient==2.2.8        # MySQL driver for the shared wenda_db
 python-dotenv==1.2.2      # loads the project-root .env
