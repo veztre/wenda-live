@@ -23,6 +23,11 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-dev-only-change-me'
 # MUST match Wenda-Quiz's WENDA_SSO_SECRET exactly (override via env in prod).
 WENDA_SSO_SECRET = os.getenv('WENDA_SSO_SECRET', 'dev-shared-sso-secret-change-me')
 
+# Public base URL of the sibling Wenda-Quiz app, used for the "Back to Wenda
+# Quiz" link in the navbar. Override per environment (in dev it points at
+# wenda-quiz's local runserver, e.g. http://127.0.0.1:8000).
+WENDA_QUIZ_URL = os.getenv('WENDA_QUIZ_URL', 'https://wenda.veztre.site')
+
 DEBUG = os.getenv('DJANGO_DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 
 allowed_hosts = os.getenv('DJANGO_ALLOWED_HOSTS', '')
@@ -104,6 +109,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'wenda_live.context_processors.wenda_quiz_url',
             ],
         },
     },
