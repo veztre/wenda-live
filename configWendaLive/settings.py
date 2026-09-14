@@ -130,7 +130,7 @@ DATABASES = {
         'PORT': os.getenv('DB_PORT', '3306'),
         'OPTIONS': {
             'charset': 'utf8mb4',
-        },
+        } if 'mysql' in os.getenv('DB_ENGINE', 'django.db.backends.mysql') else {},
     }
 }
 

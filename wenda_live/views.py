@@ -192,14 +192,14 @@ def host_create_game(request):
         return redirect('wenda_live:home')
 
     if request.method == 'POST':
-        form = HostGameForm(request.POST)
+        form = HostGameForm(request.POST, user=request.user)
         if form.is_valid():
             subject = form.cleaned_data['subject']
             seconds = form.cleaned_data['seconds_per_question']
             url = reverse('wenda_live:host_select_questions')
             return redirect(f'{url}?subject={subject.id}&seconds={seconds}')
     else:
-        form = HostGameForm()
+        form = HostGameForm(user=request.user)
 
     return render(request, 'wenda_live/host_create_game.html', {'form': form})
 

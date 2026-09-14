@@ -21,6 +21,7 @@ from django.urls import reverse
 from .consumers import option_texts, score_for
 from .models import (
     GameSession,
+    Instructor,
     LiveQuizGrade,
     Player,
     PlayerAnswer,
@@ -153,6 +154,19 @@ class HostCreateGameTests(TestCase):
             reverse('wenda_live:host_select_questions')
             + f'?subject={self.subject.id}&seconds=30',
         )
+
+    def test_host_form_filters_subjects_assigned_to_faculty(self):
+        prof_inst = Instructor.objects.create(user=self.host, department='CS', subject='CS')
+        subj_assigned = Subject.objects.create(name='CS 101', code='CS101', faculty=prof_inst)
+
+        other_user = User.objects.create_user(username='prof2', password='pw', role=User.Role.INSTRUCTOR)
+        other_inst = Instructor.objects.create(user=other_user, department='Math', subject='Math')
+        subj_other = Subject.objects.create(name='Other Subject', code='OTHER101', faculty=other_inst)
+
+        resp = self.client.get(reverse('wenda_live:host_create_game'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, subj_assigned.name)
+        self.assertNotContains(resp, subj_other.name)
 
     def test_step2_lists_questions_grouped_by_topic(self):
         resp = self.client.get(

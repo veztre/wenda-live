@@ -6,17 +6,17 @@ the WebSocket consumers in Phase 3, not by forms.
 """
 
 from django import forms
+from django.db import models
 
-from .models import GameSession, Player, QuestionBankEntry, Subject
+from .models import GameSession, Player, QuestionBankEntry, Subject, User
 
 
 class HostGameForm(forms.ModelForm):
     """Step 1 of hosting: pick the subject and the per-question timer.
 
     The host picks the actual questions on the next step (grouped by topic), so
-    this form only captures the subject and round timing. The subject choices
-    are limited to subjects that actually have questions in the shared bank, so
-    a host can't start a game with nothing to ask.
+    this form captures the subject and round timing. The subject choices are
+    filtered to the courses/subjects assigned to the logged-in teacher/faculty.
     """
 
     class Meta:
@@ -32,16 +32,17 @@ class HostGameForm(forms.ModelForm):
             'seconds_per_question': 'Seconds per question',
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
-        subject_ids_with_questions = (
-            QuestionBankEntry.objects.filter(subject__isnull=False)
-            .values_list('subject_id', flat=True)
-            .distinct()
-        )
-        self.fields['subject'].queryset = Subject.objects.filter(
-            pk__in=subject_ids_with_questions
-        )
+        qs = Subject.objects.all()
+        if user and user.is_authenticated and getattr(user, 'role', None) != User.Role.ADMIN:
+            assigned = Subject.objects.filter(
+                models.Q(faculty__user=user) | models.Q(question_bank_entries__instructor__user=user)
+            ).distinct()
+            if assigned.exists():
+                qs = assigned
+
+        self.fields['subject'].queryset = qs
         self.fields['subject'].empty_label = 'Choose a subject…'
 
 
