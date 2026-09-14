@@ -221,19 +221,21 @@ class HostConsumer(RoomConsumer):
         elif game.status == GameSession.Status.ACTIVE:
             await self.send_json({'event': 'lobby', **(await self._lobby_payload())})
             state = _GAME_QUESTION_STATE.get(self.game_id)
-            if state and state.get('revealed'):
-                payload = await self._results_payload(game.current_question_index)
-                await self.send_json({'event': 'results', **payload})
+            if state:
+                elapsed = time.time() - state['start_time']
+                if state.get('revealed') or elapsed >= game.seconds_per_question:
+                    await self._reveal()
+                else:
+                    question = await self._question_payload(game.current_question_index)
+                    if question is not None:
+                        await self.send_json({'event': 'question', **question})
+                        remaining = max(1, int(round(game.seconds_per_question - elapsed)))
+                        self._arm_timer(game.current_question_index, remaining)
             else:
                 question = await self._question_payload(game.current_question_index)
                 if question is not None:
                     await self.send_json({'event': 'question', **question})
-                    if state:
-                        elapsed = time.time() - state['start_time']
-                        remaining = max(1, int(round(game.seconds_per_question - elapsed)))
-                    else:
-                        remaining = game.seconds_per_question
-                    self._arm_timer(game.current_question_index, remaining)
+                    self._arm_timer(game.current_question_index, game.seconds_per_question)
         elif game.status == GameSession.Status.FINISHED:
             leaderboard = await self._leaderboard()
             await self.send_json({'event': 'game_over', 'leaderboard': leaderboard})
@@ -484,9 +486,20 @@ class PlayConsumer(RoomConsumer):
             await self.send_json({'event': 'game_over', 'leaderboard': leaderboard})
         elif game.status == GameSession.Status.ACTIVE:
             state = _GAME_QUESTION_STATE.get(self.game_id)
-            if state and state.get('revealed'):
-                payload = await self._results_payload(game.current_question_index)
-                await self.send_json({'event': 'results', **payload})
+            if state:
+                elapsed = time.time() - state['start_time']
+                if state.get('revealed') or elapsed >= game.seconds_per_question:
+                    payload = await self._results_payload(game.current_question_index)
+                    await self.send_json({'event': 'results', **payload})
+                else:
+                    live = await self._live_question()
+                    if live is not None:
+                        await self.send_json({'event': 'question', **live})
+                        if await self._has_answered(game.current_question_index):
+                            await self.send_json({
+                                'event': 'answer_ack',
+                                'question_index': game.current_question_index,
+                            })
             else:
                 live = await self._live_question()
                 if live is not None:

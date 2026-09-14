@@ -129,7 +129,10 @@
     function tick() {
       const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
       timer.textContent = left + 's';
-      if (left <= 0) clearInterval(countdownId);
+      if (left <= 0) {
+        clearInterval(countdownId);
+        sendAction('reveal');
+      }
     }
     tick();
     countdownId = setInterval(tick, 250);
