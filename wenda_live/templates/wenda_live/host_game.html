@@ -103,7 +103,10 @@
   const app = document.getElementById('host-app');
   const roomCode = app.dataset.roomCode;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const sock = new WebSocket(`${proto}://${location.host}/ws/host/${roomCode}/`);
+  const wsUrl = `${proto}://${location.host}/ws/host/${roomCode}/`;
+  let sock = null;
+  let reconnectDelay = 1000;
+  let gameOver = false;
 
   const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
   const views = {
@@ -154,78 +157,89 @@
   }
 
   // ----- incoming events -----
-  sock.addEventListener('open', () => {
-    document.getElementById('conn-status').innerHTML =
-      '<i class="bi bi-wifi me-1"></i> Connected — waiting for players.';
-  });
-  sock.addEventListener('close', () => {
-    document.getElementById('conn-status').innerHTML =
-      '<i class="bi bi-wifi-off me-1"></i> Disconnected.';
-  });
+  function connect() {
+    sock = new WebSocket(wsUrl);
 
-  sock.addEventListener('message', (e) => {
-    const data = JSON.parse(e.data);
-    switch (data.event) {
-      case 'lobby': {
-        document.getElementById('player-count').textContent = data.count;
-        const list = document.getElementById('player-list');
-        list.innerHTML = '';
-        if (!data.players.length) {
-          list.innerHTML = '<li class="list-group-item text-muted">Waiting for players to join…</li>';
-        } else {
-          data.players.forEach(n => {
-            const li = document.createElement('li');
-            li.className = 'list-group-item';
-            li.textContent = n;
-            list.appendChild(li);
-          });
+    sock.addEventListener('open', () => {
+      reconnectDelay = 1000;
+      document.getElementById('conn-status').innerHTML =
+        '<i class="bi bi-wifi me-1"></i> Connected — waiting for players.';
+    });
+    sock.addEventListener('close', () => {
+      document.getElementById('conn-status').innerHTML =
+        '<i class="bi bi-wifi-off me-1"></i> Reconnecting…';
+      if (gameOver) return;
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 8000);
+    });
+
+    sock.addEventListener('message', (e) => {
+      const data = JSON.parse(e.data);
+      switch (data.event) {
+        case 'lobby': {
+          document.getElementById('player-count').textContent = data.count;
+          const list = document.getElementById('player-list');
+          list.innerHTML = '';
+          if (!data.players.length) {
+            list.innerHTML = '<li class="list-group-item text-muted">Waiting for players to join…</li>';
+          } else {
+            data.players.forEach(n => {
+              const li = document.createElement('li');
+              li.className = 'list-group-item';
+              li.textContent = n;
+              list.appendChild(li);
+            });
+          }
+          document.getElementById('start-btn').disabled = data.count === 0;
+          break;
         }
-        document.getElementById('start-btn').disabled = data.count === 0;
-        break;
+        case 'question': {
+          if (data.index === shownIndex) break;   // ignore duplicate delivery
+          shownIndex = data.index;
+          currentOptions = data.options;
+          show('question');
+          document.getElementById('q-progress').textContent =
+            `Question ${data.index + 1} of ${data.total}`;
+          document.getElementById('q-text').textContent = data.question;
+          document.getElementById('q-answered').textContent = '0 answered';
+          const box = document.getElementById('q-options');
+          box.innerHTML = '';
+          data.options.forEach((opt, i) => {
+            const row = document.createElement('div');
+            row.className = `text-white rounded p-2 opt-${LETTERS[i % LETTERS.length]}`;
+            row.innerHTML = `<strong class="me-2">${LETTERS[i % LETTERS.length]}</strong>` +
+              escapeHtml(opt);
+            box.appendChild(row);
+          });
+          startCountdown(data.ends_at);
+          break;
+        }
+        case 'answer_count': {
+          document.getElementById('q-answered').textContent =
+            `${data.answered} / ${data.total} answered`;
+          break;
+        }
+        case 'results': {
+          clearInterval(countdownId);
+          show('results');
+          document.getElementById('r-correct').textContent = data.correct;
+          renderLeaderboard(document.getElementById('r-leaderboard'), data.leaderboard);
+          document.getElementById('next-btn').classList.toggle('d-none', !data.has_next);
+          document.getElementById('finish-btn').classList.toggle('d-none', data.has_next);
+          break;
+        }
+        case 'game_over': {
+          clearInterval(countdownId);
+          gameOver = true;
+          show('over');
+          renderLeaderboard(document.getElementById('o-leaderboard'), data.leaderboard);
+          break;
+        }
       }
-      case 'question': {
-        if (data.index === shownIndex) break;   // ignore duplicate delivery
-        shownIndex = data.index;
-        currentOptions = data.options;
-        show('question');
-        document.getElementById('q-progress').textContent =
-          `Question ${data.index + 1} of ${data.total}`;
-        document.getElementById('q-text').textContent = data.question;
-        document.getElementById('q-answered').textContent = '0 answered';
-        const box = document.getElementById('q-options');
-        box.innerHTML = '';
-        data.options.forEach((opt, i) => {
-          const row = document.createElement('div');
-          row.className = `text-white rounded p-2 opt-${LETTERS[i % LETTERS.length]}`;
-          row.innerHTML = `<strong class="me-2">${LETTERS[i % LETTERS.length]}</strong>` +
-            escapeHtml(opt);
-          box.appendChild(row);
-        });
-        startCountdown(data.ends_at);
-        break;
-      }
-      case 'answer_count': {
-        document.getElementById('q-answered').textContent =
-          `${data.answered} / ${data.total} answered`;
-        break;
-      }
-      case 'results': {
-        clearInterval(countdownId);
-        show('results');
-        document.getElementById('r-correct').textContent = data.correct;
-        renderLeaderboard(document.getElementById('r-leaderboard'), data.leaderboard);
-        document.getElementById('next-btn').classList.toggle('d-none', !data.has_next);
-        document.getElementById('finish-btn').classList.toggle('d-none', data.has_next);
-        break;
-      }
-      case 'game_over': {
-        clearInterval(countdownId);
-        show('over');
-        renderLeaderboard(document.getElementById('o-leaderboard'), data.leaderboard);
-        break;
-      }
-    }
-  });
+    });
+  }
+
+  connect();
 
   // ----- outgoing actions -----
   const sendAction = (action) => sock.send(JSON.stringify({ action }));

@@ -89,7 +89,10 @@
   const roomCode = app.dataset.roomCode;
   const myNick = app.dataset.nickname;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const sock = new WebSocket(`${proto}://${location.host}/ws/play/${roomCode}/`);
+  const wsUrl = `${proto}://${location.host}/ws/play/${roomCode}/`;
+  let sock = null;
+  let reconnectDelay = 1000;
+  let gameOver = false;
 
   const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
   const views = {
@@ -142,72 +145,6 @@
     return rows.find(r => r.nickname === myNick);
   }
 
-  // ----- incoming events -----
-  sock.addEventListener('close', () => {
-    document.getElementById('wait-status').textContent = 'Disconnected. Refresh to rejoin.';
-  });
-
-  sock.addEventListener('message', (e) => {
-    const data = JSON.parse(e.data);
-    switch (data.event) {
-      case 'question': {
-        if (data.index === shownIndex) break;   // ignore duplicate delivery
-        shownIndex = data.index;
-        myChoice = null;
-        questionStart = Date.now();
-        show('question');
-        document.getElementById('q-progress').textContent =
-          `Question ${data.index + 1} of ${data.total}`;
-        document.getElementById('q-text').textContent = data.question;
-        document.getElementById('q-locked').classList.add('d-none');
-        const box = document.getElementById('q-options');
-        box.innerHTML = '';
-        data.options.forEach((opt, i) => {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = `btn opt-btn rounded opt-${LETTERS[i % LETTERS.length]}`;
-          btn.innerHTML = `<strong class="me-2">${LETTERS[i % LETTERS.length]}</strong>` +
-            escapeHtml(opt);
-          btn.addEventListener('click', () => choose(opt, data.index, box));
-          box.appendChild(btn);
-        });
-        startCountdown(data.ends_at);
-        break;
-      }
-      case 'answer_ack': {
-        document.getElementById('q-locked').classList.remove('d-none');
-        break;
-      }
-      case 'results': {
-        clearInterval(countdownId);
-        show('result');
-        const answered = myChoice !== null;
-        const correct = answered && myChoice === data.correct;
-        const icon = document.getElementById('r-icon');
-        icon.className = 'bi ' + (correct ? 'bi-check-circle-fill text-success'
-          : 'bi-x-circle-fill text-danger');
-        document.getElementById('r-verdict').textContent = !answered
-          ? 'Too slow!' : (correct ? 'Correct!' : 'Not quite');
-        document.getElementById('r-correct').textContent = data.correct;
-        const mine = myRow(data.leaderboard);
-        document.getElementById('r-score').textContent = mine ? mine.score : 0;
-        const rank = data.leaderboard.findIndex(r => r.nickname === myNick) + 1;
-        document.getElementById('r-rank').textContent =
-          rank ? `· rank ${rank} of ${data.leaderboard.length}` : '';
-        break;
-      }
-      case 'game_over': {
-        clearInterval(countdownId);
-        show('over');
-        const rank = data.leaderboard.findIndex(r => r.nickname === myNick) + 1;
-        document.getElementById('o-yourplace').textContent =
-          rank ? `You finished #${rank} of ${data.leaderboard.length}.` : '';
-        renderLeaderboard(data.leaderboard);
-        break;
-      }
-    }
-  });
-
   function choose(optText, index, box) {
     if (myChoice !== null) return;            // one answer per question
     myChoice = optText;
@@ -221,6 +158,90 @@
       if (!b.textContent.endsWith(optText)) b.classList.add('faded');
     });
   }
+
+  // ----- connection lifecycle -----
+  // The socket can drop mid-game (server restart, network blip); reconnect
+  // automatically instead of leaving the player stuck until they refresh.
+  // PlayConsumer.connect() resends the live question on reconnect, so the
+  // player catches back up without any manual action.
+  function connect() {
+    sock = new WebSocket(wsUrl);
+
+    sock.addEventListener('open', () => {
+      reconnectDelay = 1000;
+    });
+
+    sock.addEventListener('close', () => {
+      if (gameOver) return;
+      document.getElementById('wait-status').textContent = 'Reconnecting…';
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 8000);
+    });
+
+    sock.addEventListener('message', (e) => {
+      const data = JSON.parse(e.data);
+      switch (data.event) {
+        case 'question': {
+          if (data.index === shownIndex) break;   // ignore duplicate delivery
+          shownIndex = data.index;
+          myChoice = null;
+          questionStart = Date.now();
+          show('question');
+          document.getElementById('q-progress').textContent =
+            `Question ${data.index + 1} of ${data.total}`;
+          document.getElementById('q-text').textContent = data.question;
+          document.getElementById('q-locked').classList.add('d-none');
+          const box = document.getElementById('q-options');
+          box.innerHTML = '';
+          data.options.forEach((opt, i) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = `btn opt-btn rounded opt-${LETTERS[i % LETTERS.length]}`;
+            btn.innerHTML = `<strong class="me-2">${LETTERS[i % LETTERS.length]}</strong>` +
+              escapeHtml(opt);
+            btn.addEventListener('click', () => choose(opt, data.index, box));
+            box.appendChild(btn);
+          });
+          startCountdown(data.ends_at);
+          break;
+        }
+        case 'answer_ack': {
+          document.getElementById('q-locked').classList.remove('d-none');
+          break;
+        }
+        case 'results': {
+          clearInterval(countdownId);
+          show('result');
+          const answered = myChoice !== null;
+          const correct = answered && myChoice === data.correct;
+          const icon = document.getElementById('r-icon');
+          icon.className = 'bi ' + (correct ? 'bi-check-circle-fill text-success'
+            : 'bi-x-circle-fill text-danger');
+          document.getElementById('r-verdict').textContent = !answered
+            ? 'Too slow!' : (correct ? 'Correct!' : 'Not quite');
+          document.getElementById('r-correct').textContent = data.correct;
+          const mine = myRow(data.leaderboard);
+          document.getElementById('r-score').textContent = mine ? mine.score : 0;
+          const rank = data.leaderboard.findIndex(r => r.nickname === myNick) + 1;
+          document.getElementById('r-rank').textContent =
+            rank ? `· rank ${rank} of ${data.leaderboard.length}` : '';
+          break;
+        }
+        case 'game_over': {
+          clearInterval(countdownId);
+          gameOver = true;
+          show('over');
+          const rank = data.leaderboard.findIndex(r => r.nickname === myNick) + 1;
+          document.getElementById('o-yourplace').textContent =
+            rank ? `You finished #${rank} of ${data.leaderboard.length}.` : '';
+          renderLeaderboard(data.leaderboard);
+          break;
+        }
+      }
+    });
+  }
+
+  connect();
 })();
 </script>
 {% endblock %}
