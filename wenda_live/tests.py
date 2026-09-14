@@ -113,6 +113,17 @@ class JoinEnrollmentTests(TestCase):
         self.assertEqual(players.count(), 1)
         self.assertEqual(players.first().nickname, 'Second')
 
+    def test_play_game_recovers_player_if_session_expired(self):
+        self.client.login(username='stud', password='pw')
+        player = Player.objects.create(game=self.game, student_user=self.student_user, nickname='stud')
+        session = self.client.session
+        session.pop('player_id', None)
+        session.save()
+
+        resp = self.client.get(reverse('wenda_live:play_game', kwargs={'room_code': self.game.room_code}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Playing as')
+
 
 class HostCreateGameTests(TestCase):
     """Two-step host flow: pick subject (step 1), then pick the actual questions

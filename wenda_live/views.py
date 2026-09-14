@@ -349,6 +349,12 @@ def play_game(request, room_code):
 
     player_id = request.session.get('player_id')
     player = Player.objects.filter(id=player_id, game=game).first() if player_id else None
+    if player is None and request.user.is_authenticated:
+        player = Player.objects.filter(game=game, student_user=request.user).first()
+        if player:
+            request.session['player_id'] = player.id
+            request.session['room_code'] = game.room_code
+
     if player is None:
         messages.error(request, 'Join the game with a PIN first.')
         return redirect('wenda_live:home')

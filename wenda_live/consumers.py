@@ -129,6 +129,37 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         )
         return list(players)
 
+    @database_sync_to_async
+    def _results_payload(self, index):
+        game = GameSession.objects.get(pk=self.game_id)
+        if index >= len(game.question_ids):
+            return {'index': index, 'correct': '', 'tally': {}, 'leaderboard': []}
+        entry = QuestionBankEntry.objects.filter(
+            pk=game.question_ids[index]
+        ).first()
+        correct = entry.correct_answer_text if entry else ''
+
+        tally = {}
+        answers = PlayerAnswer.objects.filter(
+            player__game_id=self.game_id, question_index=index
+        )
+        for chosen in answers.values_list('chosen_text', flat=True):
+            tally[chosen] = tally.get(chosen, 0) + 1
+
+        leaderboard = list(
+            Player.objects.filter(game_id=self.game_id)
+            .order_by('-score', 'joined_at')
+            .values('nickname', 'score')
+        )
+        has_next = (index + 1) < len(game.question_ids)
+        return {
+            'index': index,
+            'correct': correct,
+            'tally': tally,
+            'leaderboard': leaderboard,
+            'has_next': has_next,
+        }
+
     # -- broadcast relay handlers (game.* -> socket) ------------------------
 
     async def game_lobby(self, event):
@@ -184,8 +215,28 @@ class HostConsumer(RoomConsumer):
         await self.channel_layer.group_add(self.ctrl_group, self.channel_name)
         await self.accept()
 
-        # Send the host the current lobby/state so a reconnect resyncs.
-        await self.send_json({'event': 'lobby', **(await self._lobby_payload())})
+        # Send the host current state on connect / reconnect
+        if game.status == GameSession.Status.LOBBY:
+            await self.send_json({'event': 'lobby', **(await self._lobby_payload())})
+        elif game.status == GameSession.Status.ACTIVE:
+            await self.send_json({'event': 'lobby', **(await self._lobby_payload())})
+            state = _GAME_QUESTION_STATE.get(self.game_id)
+            if state and state.get('revealed'):
+                payload = await self._results_payload(game.current_question_index)
+                await self.send_json({'event': 'results', **payload})
+            else:
+                question = await self._question_payload(game.current_question_index)
+                if question is not None:
+                    await self.send_json({'event': 'question', **question})
+                    if state:
+                        elapsed = time.time() - state['start_time']
+                        remaining = max(1, int(round(game.seconds_per_question - elapsed)))
+                    else:
+                        remaining = game.seconds_per_question
+                    self._arm_timer(game.current_question_index, remaining)
+        elif game.status == GameSession.Status.FINISHED:
+            leaderboard = await self._leaderboard()
+            await self.send_json({'event': 'game_over', 'leaderboard': leaderboard})
 
     @staticmethod
     def _can_host(user) -> bool:
@@ -219,7 +270,13 @@ class HostConsumer(RoomConsumer):
     async def _start_question(self, index: int):
         game = await self._begin_question(index)
         if game is None:
+            await self._finish()
             return
+        _GAME_QUESTION_STATE[self.game_id] = {
+            'index': index,
+            'start_time': time.time(),
+            'revealed': False,
+        }
         question = await self._question_payload(index)
         if question is None:
             await self._finish()
@@ -237,6 +294,8 @@ class HostConsumer(RoomConsumer):
         if index in self._revealed:
             return
         self._revealed.add(index)
+        if self.game_id in _GAME_QUESTION_STATE:
+            _GAME_QUESTION_STATE[self.game_id]['revealed'] = True
         self._cancel_timer()
         payload = await self._results_payload(index)
         await self.broadcast('results', payload)
@@ -419,12 +478,24 @@ class PlayConsumer(RoomConsumer):
         # Tell the host the roster changed.
         await self.broadcast('lobby', await self._lobby_payload())
 
-        # If a question is already open, drop the late joiner straight into it.
-        # (Clients dedupe questions by index, so the rare connect-races-start
-        # case where this also arrives via broadcast is harmless.)
-        live = await self._live_question()
-        if live is not None:
-            await self.send_json({'event': 'question', **live})
+        # Sync state for player on connect / refresh
+        if game.status == GameSession.Status.FINISHED:
+            leaderboard = await self._leaderboard()
+            await self.send_json({'event': 'game_over', 'leaderboard': leaderboard})
+        elif game.status == GameSession.Status.ACTIVE:
+            state = _GAME_QUESTION_STATE.get(self.game_id)
+            if state and state.get('revealed'):
+                payload = await self._results_payload(game.current_question_index)
+                await self.send_json({'event': 'results', **payload})
+            else:
+                live = await self._live_question()
+                if live is not None:
+                    await self.send_json({'event': 'question', **live})
+                    if await self._has_answered(game.current_question_index):
+                        await self.send_json({
+                            'event': 'answer_ack',
+                            'question_index': game.current_question_index,
+                        })
 
         # Welcome last, so a client/test that waits for 'joined' knows the whole
         # connect handshake — including the late-join check — has completed.
@@ -432,9 +503,20 @@ class PlayConsumer(RoomConsumer):
 
     @database_sync_to_async
     def _load_player(self, game, player_id):
-        if not player_id:
-            return None
-        return Player.objects.filter(id=player_id, game=game).first()
+        if player_id:
+            player = Player.objects.filter(id=player_id, game=game).first()
+            if player:
+                return player
+        user = self.scope.get('user')
+        if user and getattr(user, 'is_authenticated', False):
+            return Player.objects.filter(game=game, student_user=user).first()
+        return None
+
+    @database_sync_to_async
+    def _has_answered(self, question_index: int) -> bool:
+        return PlayerAnswer.objects.filter(
+            player_id=self.player_id, question_index=question_index
+        ).exists()
 
     async def disconnect(self, code):
         if self.room_code and self.game_id:
@@ -532,8 +614,10 @@ class PlayConsumer(RoomConsumer):
 
 
 # ---------------------------------------------------------------------------
-# Module helpers
+# Module helpers & state tracking
 # ---------------------------------------------------------------------------
+
+_GAME_QUESTION_STATE: dict[int, dict] = {}
 
 
 def _build_question_payload(game_id, index, include_answer=False):
@@ -544,13 +628,27 @@ def _build_question_payload(game_id, index, include_answer=False):
     entry = QuestionBankEntry.objects.filter(pk=game.question_ids[index]).first()
     if entry is None:
         return None
+
+    state = _GAME_QUESTION_STATE.get(game_id)
+    if state and state.get('index') == index:
+        start_time = state['start_time']
+    else:
+        start_time = time.time()
+        _GAME_QUESTION_STATE[game_id] = {
+            'index': index,
+            'start_time': start_time,
+            'revealed': False,
+        }
+
+    ends_at = int((start_time + game.seconds_per_question) * 1000)
+
     payload = {
         'index': index,
         'total': len(game.question_ids),
         'question': entry.question,
         'options': option_texts(entry),
         'seconds': game.seconds_per_question,
-        'ends_at': int((time.time() + game.seconds_per_question) * 1000),
+        'ends_at': ends_at,
     }
     if include_answer:
         payload['correct'] = entry.correct_answer_text
